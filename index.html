@@ -167,6 +167,32 @@ a{color:var(--accent);text-decoration:none}
 .install-banner p{flex:1;font-size:13px;color:var(--text2)}
 .install-banner .btn{flex-shrink:0}
 
+/* Voice & Attach */
+.attach-row{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
+.attach-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;
+  border:1px dashed var(--border);border-radius:var(--radius);background:none;
+  color:var(--text2);font-size:13px;cursor:pointer;min-height:40px;
+  transition:border-color .15s,color .15s}
+.attach-btn:hover{border-color:var(--accent);color:var(--text)}
+.attach-btn.recording{border-color:var(--accent);color:var(--accent);border-style:solid;
+  animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.image-preview{position:relative;display:inline-block}
+.image-preview img{height:60px;border-radius:6px;object-fit:cover}
+.image-preview .remove-img{position:absolute;top:-6px;right:-6px;width:20px;height:20px;
+  border:none;border-radius:50%;background:var(--error);color:#fff;font-size:12px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+
+/* Wiki search */
+.wiki-search{position:relative;margin-bottom:12px}
+.wiki-search input{width:100%;padding:10px 12px 10px 36px;border:1px solid var(--border);
+  border-radius:var(--radius);background:var(--surface);color:var(--text);font-size:14px;
+  outline:none}
+.wiki-search input:focus{border-color:var(--accent)}
+.wiki-search input::placeholder{color:var(--text2)}
+.wiki-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  color:var(--text2);font-size:14px;pointer-events:none}
+
 /* Responsive: PC */
 @media(min-width:641px){
   .tab-bar{position:fixed;bottom:auto;top:0;border-top:none;border-bottom:1px solid var(--border)}
@@ -233,6 +259,15 @@ a{color:var(--accent);text-decoration:none}
       <textarea id="memo-text" placeholder="Write your memo here..."></textarea>
       <div class="auto-saved" id="auto-saved-indicator">auto-saved</div>
     </div>
+    <div class="attach-row">
+      <button type="button" class="attach-btn" id="attach-img-btn">&#128247; Image</button>
+      <button type="button" class="attach-btn" id="mic-btn" style="display:none">&#127897; Voice</button>
+      <div class="image-preview" id="image-preview" style="display:none">
+        <img id="preview-img" alt="">
+        <button type="button" class="remove-img" id="remove-img-btn">&times;</button>
+      </div>
+    </div>
+    <input type="file" id="image-input" accept="image/*" style="display:none">
     <div class="input-actions">
       <button class="btn btn-secondary" id="save-draft-btn">Save Draft</button>
       <button class="btn btn-primary" id="submit-btn">Submit</button>
@@ -248,6 +283,11 @@ a{color:var(--accent);text-decoration:none}
   <!-- Wiki Tab -->
   <div class="tab-content" id="tab-wiki">
     <div class="header"><h2>Wiki Browser</h2></div>
+    <div class="wiki-search">
+      <span class="wiki-search-icon">&#128269;</span>
+      <input type="text" id="wiki-search-input" placeholder="Search Wiki...">
+    </div>
+    <div id="wiki-search-results" style="display:none"></div>
     <div class="breadcrumb" id="wiki-breadcrumb"></div>
     <div id="wiki-body"></div>
   </div>
@@ -555,7 +595,7 @@ function startAutoSave() {
 // ── Submit ──
 async function submitMemo() {
   const text = $('#memo-text').value.trim();
-  if (!text) { showToast('Enter some text first.', 'error'); return; }
+  if (!text && !pendingImage) { showToast('Enter some text first.', 'error'); return; }
   if (!navigator.onLine) { showToast('Offline — save as draft instead.', 'error'); return; }
 
   const category = $('#category-select').value;
@@ -564,19 +604,31 @@ async function submitMemo() {
     return;
   }
 
+  if (isRecording) toggleVoice();
+
   const btn = $('#submit-btn');
   btn.disabled = true;
   btn.textContent = 'Sending...';
 
-  const filename = generateFilename(category);
-  const now = new Date().toISOString();
-  const content = '---\ncategory: ' + category + '\ncreated: ' + now + '\nsource: pwa\n---\n\n' + text + '\n';
-
   try {
+    let memoText = text;
+    if (pendingImage) {
+      btn.textContent = 'Uploading image...';
+      const imgFilename = await uploadImage();
+      if (imgFilename) {
+        memoText += (memoText ? '\n\n' : '') + '![image](images/' + imgFilename + ')';
+      }
+    }
+    btn.textContent = 'Sending...';
+    const filename = generateFilename(category);
+    const now = new Date().toISOString();
+    const content = '---\ncategory: ' + category + '\ncreated: ' + now + '\nsource: pwa\n---\n\n' + memoText + '\n';
+
     await createFile('raw/' + filename, content, 'raw: add ' + filename);
     showToast('Submitted: ' + filename, 'success');
     $('#memo-text').value = '';
     lastAutoSaveText = '';
+    removeImage();
     if (currentDraftId) {
       deleteDraft(currentDraftId);
       currentDraftId = null;
@@ -687,6 +739,166 @@ async function loadRecent() {
     }).join('');
   } catch (e) {
     container.innerHTML = '<div class="empty-state">Failed to load.</div>';
+  }
+}
+
+// ── Voice Input ──
+let recognition = null;
+let isRecording = false;
+
+function initVoiceInput() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  const micBtn = $('#mic-btn');
+  micBtn.style.display = '';
+  recognition = new SR();
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = 'ja-JP';
+  recognition.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        const text = e.results[i][0].transcript;
+        const ta = $('#memo-text');
+        const pos = ta.selectionStart;
+        const val = ta.value;
+        ta.value = val.substring(0, pos) + text + val.substring(pos);
+        ta.selectionStart = ta.selectionEnd = pos + text.length;
+      }
+    }
+  };
+  recognition.onend = () => {
+    if (isRecording) {
+      try { recognition.start(); } catch (e) { isRecording = false; $('#mic-btn').classList.remove('recording'); }
+    } else {
+      $('#mic-btn').classList.remove('recording');
+    }
+  };
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') showToast('Microphone access denied.', 'error');
+    isRecording = false;
+    $('#mic-btn').classList.remove('recording');
+  };
+}
+
+function toggleVoice() {
+  if (!recognition) { showToast('Voice input not supported.', 'error'); return; }
+  const btn = $('#mic-btn');
+  if (isRecording) {
+    isRecording = false;
+    recognition.stop();
+    btn.classList.remove('recording');
+  } else {
+    isRecording = true;
+    btn.classList.add('recording');
+    try { recognition.start(); } catch (e) { isRecording = false; btn.classList.remove('recording'); }
+  }
+}
+
+// ── Image Attachment ──
+let pendingImage = null;
+const MAX_IMG_DIM = 1200;
+const JPEG_QUALITY = 0.8;
+
+function resizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > MAX_IMG_DIM || h > MAX_IMG_DIM) {
+          if (w > h) { h = Math.round(h * MAX_IMG_DIM / w); w = MAX_IMG_DIM; }
+          else { w = Math.round(w * MAX_IMG_DIM / h); h = MAX_IMG_DIM; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+        const base64 = dataUrl.split(',')[1];
+        if (base64.length > 1000000) { reject(new Error('Image too large after compression.')); return; }
+        resolve({ dataUrl, base64 });
+      };
+      img.onerror = () => reject(new Error('Failed to load image.'));
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function handleImageSelect(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  resizeImage(file).then((result) => {
+    const now = new Date();
+    const ts = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) +
+      '_' + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+    pendingImage = { dataUrl: result.dataUrl, base64: result.base64, filename: 'img_' + ts + '.jpg' };
+    $('#preview-img').src = result.dataUrl;
+    $('#image-preview').style.display = 'inline-block';
+  }).catch((e) => showToast(e.message, 'error'));
+}
+
+function removeImage() {
+  pendingImage = null;
+  $('#image-preview').style.display = 'none';
+  $('#preview-img').src = '';
+  $('#image-input').value = '';
+}
+
+async function uploadImage() {
+  if (!pendingImage) return null;
+  const path = 'raw/images/' + pendingImage.filename;
+  const res = await ghFetch('/repos/' + ghUser + '/' + REPO + '/contents/' + path, {
+    method: 'PUT',
+    body: JSON.stringify({ message: 'raw: add image ' + pendingImage.filename, content: pendingImage.base64 })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to upload image');
+  }
+  return pendingImage.filename;
+}
+
+// ── Wiki Search ──
+let wikiTreeCache = null;
+let wikiSearchTimer = null;
+
+async function fetchWikiTree() {
+  if (wikiTreeCache) return wikiTreeCache;
+  const branchRes = await ghFetch('/repos/' + ghUser + '/' + REPO + '/branches/main');
+  if (!branchRes.ok) throw new Error('Failed to get branch info');
+  const branchData = await branchRes.json();
+  const treeRes = await ghFetch('/repos/' + ghUser + '/' + REPO + '/git/trees/' + branchData.commit.sha + '?recursive=1');
+  if (!treeRes.ok) throw new Error('Failed to get tree');
+  const treeData = await treeRes.json();
+  wikiTreeCache = treeData.tree
+    .filter((item) => item.type === 'blob' && item.path.startsWith('Wiki/'))
+    .map((item) => ({ path: item.path, name: item.path.split('/').pop(), displayPath: item.path.replace(/^Wiki\//, '') }));
+  return wikiTreeCache;
+}
+
+async function searchWiki(query) {
+  const container = $('#wiki-search-results');
+  if (!query.trim()) { container.style.display = 'none'; return; }
+  try {
+    const tree = await fetchWikiTree();
+    const q = query.toLowerCase();
+    const matches = tree.filter((item) => item.displayPath.toLowerCase().includes(q)).slice(0, 20);
+    if (!matches.length) {
+      container.innerHTML = '<div class="empty-state">No results for "' + escapeHtml(query) + '"</div>';
+    } else {
+      container.innerHTML = '<div class="file-list">' + matches.map((item) =>
+        '<div class="file-item" data-path="' + escapeHtml(item.path) + '" data-type="file" data-name="' + escapeHtml(item.name) + '">' +
+          '<span class="file-icon">&#128196;</span>' +
+          '<span class="file-name">' + escapeHtml(item.displayPath) + '</span>' +
+        '</div>'
+      ).join('') + '</div>';
+    }
+    container.style.display = 'block';
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state">Search failed.</div>';
+    container.style.display = 'block';
   }
 }
 
@@ -838,6 +1050,40 @@ document.addEventListener('DOMContentLoaded', () => {
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
     $('#install-banner').classList.remove('show');
+  });
+
+  // Voice input
+  initVoiceInput();
+  $('#mic-btn').addEventListener('click', toggleVoice);
+
+  // Image attachment
+  $('#attach-img-btn').addEventListener('click', () => $('#image-input').click());
+  $('#image-input').addEventListener('change', (e) => { if (e.target.files[0]) handleImageSelect(e.target.files[0]); });
+  $('#remove-img-btn').addEventListener('click', removeImage);
+
+  // Wiki search
+  $('#wiki-search-input').addEventListener('input', (e) => {
+    const q = e.target.value;
+    clearTimeout(wikiSearchTimer);
+    if (!q.trim()) {
+      $('#wiki-search-results').style.display = 'none';
+      $('#wiki-breadcrumb').style.display = '';
+      $('#wiki-body').style.display = '';
+      return;
+    }
+    $('#wiki-breadcrumb').style.display = 'none';
+    $('#wiki-body').style.display = 'none';
+    wikiSearchTimer = setTimeout(() => searchWiki(q), 300);
+  });
+  $('#wiki-search-results').addEventListener('click', (e) => {
+    const item = e.target.closest('.file-item');
+    if (!item) return;
+    $('#wiki-search-input').value = '';
+    $('#wiki-search-results').style.display = 'none';
+    $('#wiki-breadcrumb').style.display = '';
+    $('#wiki-body').style.display = '';
+    wikiPath = item.dataset.path.replace(/^Wiki\/?/, '').split('/');
+    viewWikiFile(item.dataset.path);
   });
 
   // Online/offline
