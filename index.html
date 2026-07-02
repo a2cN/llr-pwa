@@ -742,6 +742,24 @@ async function loadRecent() {
   }
 }
 
+async function viewRecentFile(path) {
+  const container = $('#recent-list');
+  const name = path.split('/').pop();
+  container.innerHTML = '<div class="breadcrumb">' +
+      '<button class="recent-back">&#8592; Recent</button><span>/</span><span>' + escapeHtml(name) + '</span>' +
+    '</div><div class="loading">Loading</div>';
+  try {
+    const content = await getFileContent(path);
+    container.innerHTML = '<div class="breadcrumb">' +
+        '<button class="recent-back">&#8592; Recent</button><span>/</span><span>' + escapeHtml(name) + '</span>' +
+      '</div><div class="wiki-content">' + sanitizeMarkdown(content) + '</div>';
+  } catch (e) {
+    container.innerHTML = '<div class="breadcrumb">' +
+        '<button class="recent-back">&#8592; Recent</button>' +
+      '</div><div class="empty-state">Failed to load file.</div>';
+  }
+}
+
 // ── Voice Input ──
 let recognition = null;
 let isRecording = false;
@@ -1026,6 +1044,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Recent view button
   $('#recent-list').addEventListener('click', async (e) => {
+    const back = e.target.closest('.recent-back');
+    if (back) { loadRecent(); return; }
     const btn = e.target.closest('.commit-view');
     if (!btn) return;
     const sha = btn.dataset.sha;
@@ -1033,10 +1053,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await ghFetch('/repos/' + ghUser + '/' + REPO + '/commits/' + sha);
       const data = await res.json();
       if (data.files && data.files.length) {
-        const file = data.files[0];
-        switchTab('tab-wiki');
-        wikiPath = [];
-        viewWikiFile(file.filename);
+        viewRecentFile(data.files[0].filename);
       }
     } catch (e) {
       showToast('Failed to load commit.', 'error');
