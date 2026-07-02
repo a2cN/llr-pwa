@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src https://api.github.com https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:">
 <meta name="theme-color" content="#16213e">
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
@@ -193,6 +193,41 @@ a{color:var(--accent);text-decoration:none}
 .wiki-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);
   color:var(--text2);font-size:14px;pointer-events:none}
 
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:400;
+  align-items:center;justify-content:center;padding:16px}
+.modal-overlay.show{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  width:100%;max-width:520px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px;
+  border-bottom:1px solid var(--border)}
+.modal-header h3{font-size:16px;font-weight:600}
+.modal-close{width:32px;height:32px;border:none;background:none;color:var(--text2);
+  font-size:22px;cursor:pointer;line-height:1;border-radius:50%}
+.modal-close:hover{color:var(--text);background:var(--border)}
+.modal-body{padding:16px;overflow-y:auto;flex:1}
+.modal-footer{display:flex;gap:8px;padding:16px;border-top:1px solid var(--border)}
+.modal-footer .btn{flex:1}
+.modal-body label{display:block;font-size:13px;color:var(--text2);margin-bottom:4px;margin-top:12px}
+.modal-body label:first-child{margin-top:0}
+.modal-body input,.modal-body select,.modal-body textarea{width:100%;padding:10px 12px;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);
+  font-size:15px;outline:none;font-family:inherit}
+.modal-body input:focus,.modal-body select:focus,.modal-body textarea:focus{border-color:var(--accent)}
+.modal-body textarea{min-height:160px;line-height:1.6;resize:vertical}
+.modal-preview{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px;font-size:13px;white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow-y:auto;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+.tmpl-item{display:flex;align-items:center;padding:12px;background:var(--bg);border-radius:var(--radius);
+  margin-bottom:6px;gap:12px;min-height:48px}
+.tmpl-item .tmpl-main{flex:1;overflow:hidden;cursor:pointer}
+.tmpl-name{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tmpl-cat{font-size:11px;color:var(--text2)}
+.tmpl-actions{display:flex;gap:4px;flex-shrink:0}
+.tmpl-actions button{width:34px;height:34px;border:none;background:none;color:var(--text2);
+  font-size:15px;cursor:pointer;border-radius:6px}
+.tmpl-actions button:hover{color:var(--text);background:var(--border)}
+
 /* Responsive: PC */
 @media(min-width:641px){
   .tab-bar{position:fixed;bottom:auto;top:0;border-top:none;border-bottom:1px solid var(--border)}
@@ -260,14 +295,21 @@ a{color:var(--accent);text-decoration:none}
       <div class="auto-saved" id="auto-saved-indicator">auto-saved</div>
     </div>
     <div class="attach-row">
+      <button type="button" class="attach-btn" id="template-btn">&#128196; Template</button>
       <button type="button" class="attach-btn" id="attach-img-btn">&#128247; Image</button>
       <button type="button" class="attach-btn" id="mic-btn" style="display:none">&#127897; Voice</button>
+      <button type="button" class="attach-btn" id="ocr-btn">&#128269; OCR</button>
+      <button type="button" class="attach-btn" id="pdf-btn">&#128209; PDF</button>
+      <button type="button" class="attach-btn" id="md-upload-btn">&#11014; MD</button>
       <div class="image-preview" id="image-preview" style="display:none">
         <img id="preview-img" alt="">
         <button type="button" class="remove-img" id="remove-img-btn">&times;</button>
       </div>
     </div>
     <input type="file" id="image-input" accept="image/*" style="display:none">
+    <input type="file" id="ocr-input" accept="image/*" style="display:none">
+    <input type="file" id="pdf-input" accept="application/pdf,.pdf" style="display:none">
+    <input type="file" id="md-input" accept=".md,.markdown,text/markdown,text/plain" style="display:none">
     <div class="input-actions">
       <button class="btn btn-secondary" id="save-draft-btn">Save Draft</button>
       <button class="btn btn-primary" id="submit-btn">Submit</button>
@@ -306,6 +348,18 @@ a{color:var(--accent);text-decoration:none}
   </nav>
 </div>
 
+<!-- Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">Title</h3>
+      <button type="button" class="modal-close" id="modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
@@ -315,8 +369,27 @@ a{color:var(--accent);text-decoration:none}
 const REPO = 'llr';
 const API = 'https://api.github.com';
 const DRAFT_KEY = 'llr_drafts';
+const TEMPLATE_KEY = 'llr_templates';
 const MAX_DRAFTS = 20;
 const AUTOSAVE_INTERVAL = 30000;
+
+// CDN endpoints (lazy-loaded)
+const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs';
+const PDFJS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const TESSERACT_WORKER_PATH = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js';
+const TESSERACT_CORE_PATH = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1';
+const TESSERACT_LANG_PATH = 'https://cdn.jsdelivr.net/gh/naptha/tessdata@gh-pages/4.0.0';
+const OCR_LANG = 'jpn+eng';
+
+const DEFAULT_TEMPLATES = [
+  { id: 'tmpl-diary', name: '日記', category: 'LifeLog',
+    body: '# {date} ({weekday}) の日記\n\n## 今日の出来事\n\n\n## 気づき・所感\n\n\n## 明日やること\n\n' },
+  { id: 'tmpl-report', name: '業務報告', category: 'Management',
+    body: '# 業務報告 {date}\n\n## 本日の実施内容\n\n\n## 進捗・成果\n\n\n## 課題・懸念\n\n\n## 明日の予定\n\n' },
+  { id: 'tmpl-english', name: '英語学習日誌', category: 'English',
+    body: '# English Study Log — {date}\n\n## 学習した内容\n\n\n## 新しい単語・表現\n\n| 単語/表現 | 意味 | 例文 |\n| --- | --- | --- |\n|  |  |  |\n\n## 今日の一文（英作文）\n\n\n## 振り返り\n\n' }
+];
 const VALID_CATEGORIES = [
   'LifeLog','House','Engineering','English','Management',
   'Politics_and_Law','Literature','Philosophy_and_Ethics',
@@ -369,6 +442,44 @@ function uuid() {
       const r = Math.random()*16|0;
       return (c === 'x' ? r : (r&0x3|0x8)).toString(16);
     });
+}
+
+const WEEKDAYS_JA = ['日','月','火','水','木','金','土'];
+function expandPlaceholders(str) {
+  const now = new Date();
+  const date = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate());
+  const datetime = date + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+  return str
+    .replace(/\{datetime\}/g, datetime)
+    .replace(/\{date\}/g, date)
+    .replace(/\{weekday\}/g, WEEKDAYS_JA[now.getDay()]);
+}
+
+// ── Modal ──
+function openModal(title, bodyHtml, footerHtml) {
+  $('#modal-title').textContent = title;
+  $('#modal-body').innerHTML = bodyHtml;
+  $('#modal-footer').innerHTML = footerHtml || '';
+  $('#modal-overlay').classList.add('show');
+}
+function closeModal() {
+  $('#modal-overlay').classList.remove('show');
+  $('#modal-body').innerHTML = '';
+  $('#modal-footer').innerHTML = '';
+}
+
+// ── Lazy script loader ──
+const loadedScripts = {};
+function loadScript(url) {
+  if (loadedScripts[url]) return loadedScripts[url];
+  loadedScripts[url] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url;
+    s.onload = resolve;
+    s.onerror = () => { delete loadedScripts[url]; reject(new Error('Failed to load ' + url)); };
+    document.head.appendChild(s);
+  });
+  return loadedScripts[url];
 }
 
 // ── GitHub API ──
@@ -920,6 +1031,243 @@ async function searchWiki(query) {
   }
 }
 
+// ── Insert into memo ──
+function insertTextAtCursor(text) {
+  const ta = $('#memo-text');
+  const pos = ta.selectionStart;
+  const val = ta.value;
+  const before = val.substring(0, pos);
+  const sep = before && !before.endsWith('\n') ? '\n' : '';
+  ta.value = before + sep + text + val.substring(pos);
+  const newPos = pos + sep.length + text.length;
+  ta.selectionStart = ta.selectionEnd = newPos;
+  ta.focus();
+}
+
+// ── Templates ──
+function loadTemplates() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(TEMPLATE_KEY));
+    if (Array.isArray(stored)) return stored;
+  } catch { /* fall through */ }
+  const seed = DEFAULT_TEMPLATES.map((t) => ({ ...t }));
+  saveTemplates(seed);
+  return seed;
+}
+function saveTemplates(templates) {
+  localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
+}
+
+function applyTemplate(id) {
+  const t = loadTemplates().find((x) => x.id === id);
+  if (!t) return;
+  const body = expandPlaceholders(t.body);
+  const ta = $('#memo-text');
+  const proceed = () => {
+    if (t.category && VALID_CATEGORIES.includes(t.category)) $('#category-select').value = t.category;
+    closeModal();
+  };
+  if (ta.value.trim()) {
+    openModal('テンプレートを適用', '<p style="font-size:14px;color:var(--text2)">既に入力があります。どうしますか？</p>',
+      '<button class="btn btn-secondary" data-tmpl-apply="append">末尾に追加</button>' +
+      '<button class="btn btn-primary" data-tmpl-apply="replace">置換</button>');
+    $('#modal-footer').querySelectorAll('[data-tmpl-apply]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.tmplApply === 'replace') ta.value = body;
+        else ta.value = ta.value.replace(/\s*$/, '') + '\n\n' + body;
+        proceed();
+      });
+    });
+  } else {
+    ta.value = body;
+    proceed();
+  }
+}
+
+function openTemplatePicker() {
+  const templates = loadTemplates();
+  const list = templates.length
+    ? templates.map((t) =>
+        '<div class="tmpl-item" data-id="' + t.id + '">' +
+          '<div class="tmpl-main" data-action="apply">' +
+            '<div class="tmpl-name">' + escapeHtml(t.name) + '</div>' +
+            '<div class="tmpl-cat">' + escapeHtml(t.category || '') + '</div>' +
+          '</div>' +
+          '<div class="tmpl-actions">' +
+            '<button data-action="edit" title="Edit">&#9998;</button>' +
+            '<button data-action="delete" title="Delete">&times;</button>' +
+          '</div>' +
+        '</div>'
+      ).join('')
+    : '<div class="empty-state">No templates</div>';
+  openModal('テンプレート', '<div id="tmpl-list">' + list + '</div>',
+    '<button class="btn btn-secondary" id="tmpl-add-btn">&#43; 新規作成</button>');
+  $('#tmpl-add-btn').addEventListener('click', () => openTemplateEditor(null));
+  $('#tmpl-list').addEventListener('click', (e) => {
+    const item = e.target.closest('.tmpl-item');
+    if (!item) return;
+    const id = item.dataset.id;
+    const action = (e.target.closest('[data-action]') || {}).dataset;
+    if (!action) return;
+    if (action.action === 'apply') applyTemplate(id);
+    else if (action.action === 'edit') openTemplateEditor(id);
+    else if (action.action === 'delete') {
+      if (confirm('このテンプレートを削除しますか？')) {
+        saveTemplates(loadTemplates().filter((t) => t.id !== id));
+        openTemplatePicker();
+      }
+    }
+  });
+}
+
+function openTemplateEditor(id) {
+  const templates = loadTemplates();
+  const t = id ? templates.find((x) => x.id === id) : { name: '', category: 'LifeLog', body: '' };
+  if (!t) return;
+  const catOptions = VALID_CATEGORIES.map((c) =>
+    '<option value="' + c + '"' + (c === t.category ? ' selected' : '') + '>' + c + '</option>').join('');
+  openModal(id ? 'テンプレート編集' : '新規テンプレート',
+    '<label>名前</label><input type="text" id="tmpl-name" value="' + escapeHtml(t.name) + '">' +
+    '<label>カテゴリ</label><select id="tmpl-category">' + catOptions + '</select>' +
+    '<label>本文（{date} {datetime} {weekday} が使えます）</label>' +
+    '<textarea id="tmpl-body">' + escapeHtml(t.body) + '</textarea>',
+    '<button class="btn btn-secondary" id="tmpl-cancel-btn">キャンセル</button>' +
+    '<button class="btn btn-primary" id="tmpl-save-btn">保存</button>');
+  $('#tmpl-cancel-btn').addEventListener('click', openTemplatePicker);
+  $('#tmpl-save-btn').addEventListener('click', () => {
+    const name = $('#tmpl-name').value.trim();
+    if (!name) { showToast('名前を入力してください。', 'error'); return; }
+    const data = { name, category: $('#tmpl-category').value, body: $('#tmpl-body').value };
+    const all = loadTemplates();
+    if (id) {
+      const idx = all.findIndex((x) => x.id === id);
+      if (idx >= 0) all[idx] = { ...all[idx], ...data };
+    } else {
+      all.push({ id: uuid(), ...data });
+    }
+    saveTemplates(all);
+    openTemplatePicker();
+  });
+}
+
+// ── PDF text extraction ──
+async function extractPdfText(file) {
+  await loadPdfjs();
+  const buf = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+  const btn = $('#pdf-btn');
+  const parts = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    btn.textContent = 'PDF ' + i + '/' + pdf.numPages;
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    parts.push(content.items.map((it) => it.str).join(' '));
+  }
+  return parts.join('\n');
+}
+
+let pdfjsReady = null;
+function loadPdfjs() {
+  if (pdfjsReady) return pdfjsReady;
+  // pdf.js v4 ships ES modules; import dynamically and configure a blob worker (cross-origin worker needs blob).
+  pdfjsReady = (async () => {
+    const lib = await import(PDFJS_URL);
+    const workerBlob = await fetch(PDFJS_WORKER_URL).then((r) => r.blob());
+    lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
+    window.pdfjsLib = lib;
+  })().catch((e) => { pdfjsReady = null; throw e; });
+  return pdfjsReady;
+}
+
+async function handlePdfSelect(file) {
+  if (!file) return;
+  const btn = $('#pdf-btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const text = await extractPdfText(file);
+    if (!text.trim()) {
+      showToast('テキストを抽出できませんでした（スキャンPDFの可能性）。', 'error');
+    } else {
+      insertTextAtCursor(text.trim());
+      showToast('PDFのテキストを挿入しました。', 'success');
+    }
+  } catch (e) {
+    showToast('PDF処理に失敗: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    $('#pdf-input').value = '';
+  }
+}
+
+// ── Markdown upload ──
+function handleMdSelect(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const content = reader.result;
+    const category = $('#category-select').value;
+    const path = 'raw/' + generateFilename(category);
+    openModal('Markdown アップロード',
+      '<p style="font-size:13px;color:var(--text2);margin-bottom:8px">投入先: <code>' + escapeHtml(path) + '</code></p>' +
+      '<div class="modal-preview">' + escapeHtml(content) + '</div>',
+      '<button class="btn btn-secondary" id="md-cancel-btn">キャンセル</button>' +
+      '<button class="btn btn-primary" id="md-confirm-btn">アップロード</button>');
+    $('#md-cancel-btn').addEventListener('click', closeModal);
+    $('#md-confirm-btn').addEventListener('click', async () => {
+      if (!navigator.onLine) { showToast('オフラインです。', 'error'); return; }
+      const cbtn = $('#md-confirm-btn');
+      cbtn.disabled = true; cbtn.textContent = 'アップロード中...';
+      try {
+        await createFile(path, content, 'raw: upload ' + path.replace('raw/', ''));
+        showToast('アップロード完了: ' + path.replace('raw/', ''), 'success');
+        closeModal();
+      } catch (e) {
+        showToast('アップロード失敗: ' + e.message, 'error');
+        cbtn.disabled = false; cbtn.textContent = 'アップロード';
+      }
+    });
+  };
+  reader.onerror = () => showToast('ファイル読み込みに失敗しました。', 'error');
+  reader.readAsText(file);
+  $('#md-input').value = '';
+}
+
+// ── Image OCR ──
+async function handleOcrSelect(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const btn = $('#ocr-btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'OCR 準備中...';
+  try {
+    await loadScript(TESSERACT_URL);
+    const result = await window.Tesseract.recognize(file, OCR_LANG, {
+      workerPath: TESSERACT_WORKER_PATH,
+      corePath: TESSERACT_CORE_PATH,
+      langPath: TESSERACT_LANG_PATH,
+      logger: (m) => {
+        if (m.status === 'recognizing text') btn.textContent = 'OCR ' + Math.round(m.progress * 100) + '%';
+        else if (m.status) btn.textContent = 'OCR 準備中...';
+      }
+    });
+    const text = (result.data.text || '').trim();
+    if (!text) {
+      showToast('文字を検出できませんでした。', 'error');
+    } else {
+      insertTextAtCursor(text);
+      showToast('OCR結果を挿入しました。', 'success');
+    }
+  } catch (e) {
+    showToast('OCRに失敗: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    $('#ocr-input').value = '';
+  }
+}
+
 // ── Tab navigation ──
 function switchTab(tabId) {
   $$('.tab-content').forEach((el) => el.classList.remove('active'));
@@ -1077,6 +1425,25 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#attach-img-btn').addEventListener('click', () => $('#image-input').click());
   $('#image-input').addEventListener('change', (e) => { if (e.target.files[0]) handleImageSelect(e.target.files[0]); });
   $('#remove-img-btn').addEventListener('click', removeImage);
+
+  // Templates
+  $('#template-btn').addEventListener('click', openTemplatePicker);
+
+  // OCR
+  $('#ocr-btn').addEventListener('click', () => $('#ocr-input').click());
+  $('#ocr-input').addEventListener('change', (e) => { if (e.target.files[0]) handleOcrSelect(e.target.files[0]); });
+
+  // PDF
+  $('#pdf-btn').addEventListener('click', () => $('#pdf-input').click());
+  $('#pdf-input').addEventListener('change', (e) => { if (e.target.files[0]) handlePdfSelect(e.target.files[0]); });
+
+  // Markdown upload
+  $('#md-upload-btn').addEventListener('click', () => $('#md-input').click());
+  $('#md-input').addEventListener('change', (e) => { if (e.target.files[0]) handleMdSelect(e.target.files[0]); });
+
+  // Modal close
+  $('#modal-close').addEventListener('click', closeModal);
+  $('#modal-overlay').addEventListener('click', (e) => { if (e.target === $('#modal-overlay')) closeModal(); });
 
   // Wiki search
   $('#wiki-search-input').addEventListener('input', (e) => {
