@@ -193,6 +193,22 @@ a{color:var(--accent);text-decoration:none}
 .wiki-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);
   color:var(--text2);font-size:14px;pointer-events:none}
 
+/* Markdown toolbar */
+.md-toolbar{display:flex;align-items:center;gap:4px;margin-bottom:8px}
+.md-tb-scroll{flex:1;display:flex;gap:4px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none}
+.md-tb-scroll::-webkit-scrollbar{display:none}
+.md-toolbar button{flex-shrink:0;min-width:42px;height:40px;padding:0 10px;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface);
+  color:var(--text);font-size:14px;cursor:pointer;display:inline-flex;
+  align-items:center;justify-content:center;transition:background .15s,border-color .15s}
+.md-toolbar button:hover{background:var(--surface2)}
+.md-toolbar button:active{border-color:var(--accent)}
+.md-toolbar button b,.md-toolbar button i,.md-toolbar button s{font-size:15px}
+#preview-toggle.active{border-color:var(--accent);color:var(--accent)}
+.md-toolbar.preview-mode .md-tb-scroll button{opacity:.35;pointer-events:none}
+.memo-preview{flex:1;min-height:35vh;overflow-y:auto;border:1px solid var(--border)}
+
 /* Modal */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:400;
   align-items:center;justify-content:center;padding:16px}
@@ -290,8 +306,27 @@ a{color:var(--accent);text-decoration:none}
       <option value="Human_Sciences">Human Sciences</option>
       <option value="Uncategorized">Uncategorized</option>
     </select>
+    <div class="md-toolbar" id="md-toolbar">
+      <div class="md-tb-scroll">
+        <button type="button" data-md="bold" title="Bold"><b>B</b></button>
+        <button type="button" data-md="italic" title="Italic"><i>I</i></button>
+        <button type="button" data-md="strike" title="Strikethrough"><s>S</s></button>
+        <button type="button" data-md="h2" title="Heading 2">H2</button>
+        <button type="button" data-md="h3" title="Heading 3">H3</button>
+        <button type="button" data-md="ul" title="Bullet list">&#8226;&#8212;</button>
+        <button type="button" data-md="ol" title="Numbered list">1.</button>
+        <button type="button" data-md="task" title="Checklist">&#9745;</button>
+        <button type="button" data-md="quote" title="Quote">&#10077;</button>
+        <button type="button" data-md="link" title="Link">&#128279;</button>
+        <button type="button" data-md="code" title="Code">&lt;/&gt;</button>
+        <button type="button" data-md="table" title="Table">&#8862;</button>
+        <button type="button" data-md="hr" title="Horizontal rule">&#8213;</button>
+      </div>
+      <button type="button" id="preview-toggle" title="Toggle preview">&#128065;</button>
+    </div>
     <div class="textarea-wrap">
       <textarea id="memo-text" placeholder="Write your memo here..."></textarea>
+      <div class="wiki-content memo-preview" id="memo-preview" style="display:none"></div>
       <div class="auto-saved" id="auto-saved-indicator">auto-saved</div>
     </div>
     <div class="attach-row">
@@ -653,6 +688,7 @@ function loadDraft(id) {
   const drafts = loadDrafts();
   const d = drafts.find((dr) => dr.id === id);
   if (!d) return;
+  if (isPreviewMode) toggleMemoPreview();
   currentDraftId = d.id;
   $('#memo-text').value = d.text;
   $('#category-select').value = d.category;
@@ -738,6 +774,7 @@ async function submitMemo() {
 
     await createFile('raw/' + filename, content, 'raw: add ' + filename);
     showToast('Submitted: ' + filename, 'success');
+    if (isPreviewMode) toggleMemoPreview();
     $('#memo-text').value = '';
     lastAutoSaveText = '';
     removeImage();
@@ -1045,6 +1082,165 @@ function insertTextAtCursor(text) {
   ta.focus();
 }
 
+// ── Markdown editor toolbar ──
+let isPreviewMode = false;
+
+// Replace [start,end) with text via execCommand so native undo history survives.
+function mdReplaceRange(ta, start, end, text) {
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  let ok = false;
+  try {
+    ok = text === ''
+      ? document.execCommand('delete')
+      : document.execCommand('insertText', false, text);
+  } catch { ok = false; }
+  if (!ok) {
+    ta.setRangeText(text, start, end, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+function mdWrapSelection(marker, endMarker) {
+  const ta = $('#memo-text');
+  const em = endMarker || marker;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const v = ta.value;
+  const sel = v.slice(s, e);
+  if (sel.length >= marker.length + em.length && sel.startsWith(marker) && sel.endsWith(em)) {
+    // Selection includes the markers → unwrap
+    const inner = sel.slice(marker.length, sel.length - em.length);
+    mdReplaceRange(ta, s, e, inner);
+    ta.setSelectionRange(s, s + inner.length);
+  } else if (v.slice(s - marker.length, s) === marker && v.slice(e, e + em.length) === em) {
+    // Markers just outside the selection → unwrap
+    mdReplaceRange(ta, s - marker.length, e + em.length, sel);
+    ta.setSelectionRange(s - marker.length, s - marker.length + sel.length);
+  } else {
+    mdReplaceRange(ta, s, e, marker + sel + em);
+    ta.setSelectionRange(s + marker.length, s + marker.length + sel.length);
+  }
+}
+
+// Apply transform(lines) to all lines touched by the selection.
+function mdTransformLines(transform) {
+  const ta = $('#memo-text');
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const v = ta.value;
+  const ls = v.lastIndexOf('\n', s - 1) + 1;
+  let le = v.indexOf('\n', e);
+  if (le < 0) le = v.length;
+  const lines = v.slice(ls, le).split('\n');
+  const out = transform(lines).join('\n');
+  mdReplaceRange(ta, ls, le, out);
+  ta.setSelectionRange(ls, ls + out.length);
+}
+
+function mdToggleLinePrefix(prefix, stripRe) {
+  mdTransformLines((lines) => {
+    const allHave = lines.every((l) => l.startsWith(prefix) || !l.trim());
+    return lines.map((l) => {
+      if (!l.trim()) return l;
+      const stripped = l.replace(stripRe, '');
+      return allHave ? stripped : prefix + stripped;
+    });
+  });
+}
+
+const MD_LIST_STRIP_RE = /^(\s*)(?:[-*+](?:\s\[[ xX]\])?|\d+\.)\s/;
+const MD_HEAD_STRIP_RE = /^#{1,6}\s/;
+
+function mdAction(cmd) {
+  const ta = $('#memo-text');
+  switch (cmd) {
+    case 'bold': mdWrapSelection('**'); break;
+    case 'italic': mdWrapSelection('*'); break;
+    case 'strike': mdWrapSelection('~~'); break;
+    case 'h2': mdToggleLinePrefix('## ', MD_HEAD_STRIP_RE); break;
+    case 'h3': mdToggleLinePrefix('### ', MD_HEAD_STRIP_RE); break;
+    case 'ul': mdToggleLinePrefix('- ', MD_LIST_STRIP_RE); break;
+    case 'task': mdToggleLinePrefix('- [ ] ', MD_LIST_STRIP_RE); break;
+    case 'quote': mdToggleLinePrefix('> ', /^>\s/); break;
+    case 'ol':
+      mdTransformLines((lines) => {
+        const allHave = lines.every((l) => /^\s*\d+\.\s/.test(l) || !l.trim());
+        let n = 0;
+        return lines.map((l) => {
+          if (!l.trim()) return l;
+          const stripped = l.replace(MD_LIST_STRIP_RE, '');
+          return allHave ? stripped : (++n) + '. ' + stripped;
+        });
+      });
+      break;
+    case 'link': {
+      const s = ta.selectionStart, e = ta.selectionEnd;
+      const sel = ta.value.slice(s, e);
+      const text = '[' + (sel || 'text') + '](url)';
+      mdReplaceRange(ta, s, e, text);
+      // Select the "url" part for immediate typing
+      ta.setSelectionRange(s + text.length - 4, s + text.length - 1);
+      break;
+    }
+    case 'code': {
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (sel.includes('\n')) mdWrapSelection('```\n', '\n```');
+      else mdWrapSelection('`');
+      break;
+    }
+    case 'table':
+      insertTextAtCursor('|  |  |\n| --- | --- |\n|  |  |\n');
+      break;
+    case 'hr':
+      insertTextAtCursor('\n---\n');
+      break;
+  }
+}
+
+// Continue "- " / "1. " / "- [ ] " lists on Enter; empty item ends the list.
+function mdSmartListKeydown(ev) {
+  if (ev.key !== 'Enter' || ev.isComposing || ev.shiftKey) return;
+  const ta = ev.target;
+  const s = ta.selectionStart;
+  if (s !== ta.selectionEnd) return;
+  const v = ta.value;
+  const ls = v.lastIndexOf('\n', s - 1) + 1;
+  const line = v.slice(ls, s);
+  const m = line.match(/^(\s*)([-*+]|\d+\.)(\s\[[ xX]\])?\s(.*)$/);
+  if (!m) return;
+  ev.preventDefault();
+  if (!m[4].trim()) {
+    // Empty item → remove the marker and end the list
+    mdReplaceRange(ta, ls, s, '');
+    return;
+  }
+  let marker = m[2];
+  if (/^\d+\.$/.test(marker)) marker = (parseInt(marker, 10) + 1) + '.';
+  const box = m[3] ? ' [ ]' : '';
+  mdReplaceRange(ta, s, s, '\n' + m[1] + marker + box + ' ');
+}
+
+function toggleMemoPreview() {
+  isPreviewMode = !isPreviewMode;
+  const ta = $('#memo-text');
+  const pv = $('#memo-preview');
+  const tglBtn = $('#preview-toggle');
+  if (isPreviewMode) {
+    pv.innerHTML = ta.value.trim()
+      ? sanitizeMarkdown(ta.value)
+      : '<div class="empty-state">Nothing to preview</div>';
+    ta.style.display = 'none';
+    pv.style.display = 'block';
+    tglBtn.classList.add('active');
+    $('#md-toolbar').classList.add('preview-mode');
+  } else {
+    pv.style.display = 'none';
+    ta.style.display = '';
+    tglBtn.classList.remove('active');
+    $('#md-toolbar').classList.remove('preview-mode');
+    ta.focus();
+  }
+}
+
 // ── Templates ──
 function loadTemplates() {
   try {
@@ -1062,6 +1258,7 @@ function saveTemplates(templates) {
 function applyTemplate(id) {
   const t = loadTemplates().find((x) => x.id === id);
   if (!t) return;
+  if (isPreviewMode) toggleMemoPreview();
   const body = expandPlaceholders(t.body);
   const ta = $('#memo-text');
   const proceed = () => {
@@ -1397,6 +1594,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Templates
   $('#template-btn').addEventListener('click', openTemplatePicker);
+
+  // Markdown toolbar
+  $('#md-toolbar').addEventListener('mousedown', (e) => {
+    // Keep textarea focus (and selection) when tapping toolbar buttons
+    if (e.target.closest('button')) e.preventDefault();
+  });
+  $('#md-toolbar').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-md]');
+    if (btn && !isPreviewMode) mdAction(btn.dataset.md);
+  });
+  $('#preview-toggle').addEventListener('click', toggleMemoPreview);
+  $('#memo-text').addEventListener('keydown', mdSmartListKeydown);
 
   // PDF
   $('#pdf-btn').addEventListener('click', () => $('#pdf-input').click());
