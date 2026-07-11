@@ -298,7 +298,6 @@ a{color:var(--accent);text-decoration:none}
       <button type="button" class="attach-btn" id="template-btn">&#128196; Template</button>
       <button type="button" class="attach-btn" id="attach-img-btn">&#128247; Image</button>
       <button type="button" class="attach-btn" id="mic-btn" style="display:none">&#127897; Voice</button>
-      <button type="button" class="attach-btn" id="ocr-btn">&#128269; OCR</button>
       <button type="button" class="attach-btn" id="pdf-btn">&#128209; PDF</button>
       <button type="button" class="attach-btn" id="md-upload-btn">&#11014; MD</button>
       <div class="image-preview" id="image-preview" style="display:none">
@@ -307,7 +306,6 @@ a{color:var(--accent);text-decoration:none}
       </div>
     </div>
     <input type="file" id="image-input" accept="image/*" style="display:none">
-    <input type="file" id="ocr-input" accept="image/*" style="display:none">
     <input type="file" id="pdf-input" accept="application/pdf,.pdf" style="display:none">
     <input type="file" id="md-input" accept=".md,.markdown,text/markdown,text/plain" style="display:none">
     <div class="input-actions">
@@ -376,18 +374,6 @@ const AUTOSAVE_INTERVAL = 30000;
 // CDN endpoints (lazy-loaded)
 const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs';
 const PDFJS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
-const TESSERACT_WORKER_PATH = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js';
-const TESSERACT_CORE_PATH = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1';
-const TESSERACT_LANG_PATH = 'https://cdn.jsdelivr.net/gh/naptha/tessdata@gh-pages/4.0.0';
-const OCR_LANG = 'jpn+eng';
-const OCR_STATUS_LABELS = {
-  'loading tesseract core': 'コア読込中',
-  'initializing tesseract': '初期化中',
-  'loading language traineddata': '言語データ取得中',
-  'initializing api': '準備中',
-  'recognizing text': '認識中'
-};
 
 const DEFAULT_TEMPLATES = [
   { id: 'tmpl-diary', name: '日記', category: 'LifeLog',
@@ -1249,42 +1235,6 @@ function handleMdSelect(file) {
   $('#md-input').value = '';
 }
 
-// ── Image OCR ──
-async function handleOcrSelect(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  const btn = $('#ocr-btn');
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.textContent = 'OCR 準備中...';
-  try {
-    await loadScript(TESSERACT_URL);
-    const result = await window.Tesseract.recognize(file, OCR_LANG, {
-      workerPath: TESSERACT_WORKER_PATH,
-      corePath: TESSERACT_CORE_PATH,
-      langPath: TESSERACT_LANG_PATH,
-      logger: (m) => {
-        if (!m.status) return;
-        const label = OCR_STATUS_LABELS[m.status] || m.status;
-        const pct = typeof m.progress === 'number' ? ' ' + Math.round(m.progress * 100) + '%' : '';
-        btn.textContent = label + pct;
-      }
-    });
-    const text = (result.data.text || '').trim();
-    if (!text) {
-      showToast('文字を検出できませんでした。', 'error');
-    } else {
-      insertTextAtCursor(text);
-      showToast('OCR結果を挿入しました。', 'success');
-    }
-  } catch (e) {
-    showToast('OCRに失敗: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = orig;
-    $('#ocr-input').value = '';
-  }
-}
-
 // ── Tab navigation ──
 function switchTab(tabId) {
   $$('.tab-content').forEach((el) => el.classList.remove('active'));
@@ -1447,10 +1397,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Templates
   $('#template-btn').addEventListener('click', openTemplatePicker);
-
-  // OCR
-  $('#ocr-btn').addEventListener('click', () => $('#ocr-input').click());
-  $('#ocr-input').addEventListener('change', (e) => { if (e.target.files[0]) handleOcrSelect(e.target.files[0]); });
 
   // PDF
   $('#pdf-btn').addEventListener('click', () => $('#pdf-input').click());
