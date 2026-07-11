@@ -1353,7 +1353,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const text = $('#memo-text').value;
     if (!text.trim()) { showToast('Nothing to save.', 'error'); return; }
     addOrUpdateDraft($('#category-select').value, text);
-    lastAutoSaveText = text;
+    $('#memo-text').value = '';
+    lastAutoSaveText = '';
+    currentDraftId = null;
     showToast('Draft saved.', 'success');
   });
 
