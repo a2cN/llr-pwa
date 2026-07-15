@@ -1,4 +1,4 @@
-const CACHE_NAME = 'llr-v1';
+const CACHE_NAME = 'llr-v2';
 const CACHE_URLS = [
   './',
   './index.html',
@@ -29,7 +29,10 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  if (e.request.mode === 'navigate' || e.request.destination === 'document') {
+  // Network-first for documents AND the manifest, so manifest changes
+  // (e.g. share_target) reach the browser without a cache-name bump.
+  if (e.request.mode === 'navigate' || e.request.destination === 'document'
+      || url.pathname.endsWith('/manifest.json')) {
     e.respondWith(
       fetch(e.request)
         .then((res) => {
