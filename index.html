@@ -409,6 +409,8 @@ const AUTOSAVE_INTERVAL = 30000;
 // CDN endpoints (lazy-loaded)
 const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs';
 const PDFJS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+const TURNDOWN_URL = 'https://cdn.jsdelivr.net/npm/turndown@7.2.4/dist/turndown.js';
+const TURNDOWN_GFM_URL = 'https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js';
 
 const DEFAULT_TEMPLATES = [
   { id: 'tmpl-diary', name: '日記', category: 'LifeLog',
@@ -1082,6 +1084,67 @@ function insertTextAtCursor(text) {
   ta.focus();
 }
 
+// ── Smart paste (HTML clipboard → Markdown via Turndown) ──
+let turndownService = null;
+// Convert only when the clipboard HTML has meaningful structure; plain
+// paragraph/span-only copies fall through to the native paste.
+const RICH_HTML_RE = /<(a|h[1-6]|ul|ol|li|table|blockquote|strong|b|em|img|hr)\b/i;
+
+async function getTurndown() {
+  if (turndownService) return turndownService;
+  await loadScript(TURNDOWN_URL);
+  await loadScript(TURNDOWN_GFM_URL);
+  turndownService = new TurndownService({
+    headingStyle: 'atx',
+    codeBlockStyle: 'fenced',
+    bulletListMarker: '-',
+    hr: '---',
+    emDelimiter: '*'
+  });
+  turndownService.use(turndownPluginGfm.gfm);
+  turndownService.remove(['script', 'style', 'noscript']);
+  return turndownService;
+}
+
+function handleSmartPaste(e) {
+  if (!e.clipboardData) return;
+  const html = e.clipboardData.getData('text/html');
+  if (!html || !RICH_HTML_RE.test(html)) return; // native paste
+  e.preventDefault();
+  const ta = e.target;
+  const s = ta.selectionStart, en = ta.selectionEnd;
+  const plain = e.clipboardData.getData('text/plain'); // capture before await
+  getTurndown().then((td) => {
+    const md = td.turndown(html).trim();
+    mdReplaceRange(ta, s, en, md || plain);
+    if (md) showToast('HTML→Markdown変換して貼り付けました。', 'success');
+  }).catch(() => {
+    mdReplaceRange(ta, s, en, plain);
+  });
+}
+
+// ── Web Share Target (Android) ──
+function handleSharedParams() {
+  const qs = new URLSearchParams(location.search);
+  if (!qs.has('shared_title') && !qs.has('shared_text') && !qs.has('shared_url')) return;
+  const title = (qs.get('shared_title') || '').trim().replace(/[\[\]]/g, '');
+  let text = (qs.get('shared_text') || '').trim();
+  let url = (qs.get('shared_url') || '').trim();
+  // Android often passes the URL inside text when there is no url param
+  if (!url && /^https?:\/\/\S+$/.test(text)) { url = text; text = ''; }
+  const parts = [];
+  if (url) parts.push(title ? '[' + title + '](' + url + ')' : url);
+  else if (title) parts.push(title);
+  if (text) parts.push(text);
+  const md = parts.join('\n\n');
+  if (md) {
+    const ta = $('#memo-text');
+    ta.value = ta.value.trim() ? ta.value.replace(/\s*$/, '') + '\n\n' + md : md;
+    showToast('Shared content added.', 'success');
+  }
+  history.replaceState(null, '', location.pathname);
+}
+
 // ── Markdown editor toolbar ──
 let isPreviewMode = false;
 
@@ -1606,6 +1669,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   $('#preview-toggle').addEventListener('click', toggleMemoPreview);
   $('#memo-text').addEventListener('keydown', mdSmartListKeydown);
+  $('#memo-text').addEventListener('paste', handleSmartPaste);
+
+  // Web Share Target: prefill memo from shared params
+  handleSharedParams();
 
   // PDF
   $('#pdf-btn').addEventListener('click', () => $('#pdf-input').click());
