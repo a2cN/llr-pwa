@@ -1310,7 +1310,18 @@ function toggleMemoPreview() {
 function loadTemplates() {
   try {
     const stored = JSON.parse(localStorage.getItem(TEMPLATE_KEY));
-    if (Array.isArray(stored)) return stored;
+    if (Array.isArray(stored)) {
+      // Merge in any newly added defaults the user hasn't seen yet
+      // (existing entries are untouched, so user edits/deletes stick).
+      const knownIds = new Set(stored.map((t) => t.id));
+      const missing = DEFAULT_TEMPLATES.filter((t) => !knownIds.has(t.id)).map((t) => ({ ...t }));
+      if (missing.length) {
+        const merged = stored.concat(missing);
+        saveTemplates(merged);
+        return merged;
+      }
+      return stored;
+    }
   } catch { /* fall through */ }
   const seed = DEFAULT_TEMPLATES.map((t) => ({ ...t }));
   saveTemplates(seed);
