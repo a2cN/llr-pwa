@@ -427,8 +427,8 @@ const DEFAULT_TEMPLATES = [
     body: '#eiken 今日何すればいい？' },
   { id: 'tmpl-eiken-howto', name: '英検 使い方確認', category: 'English',
     body: '#eiken 使い方教えて' },
-  { id: 'tmpl-article-v2', name: '記事クリップ', category: 'Uncategorized',
-    body: '#article\nid: {date}-\ntags: \nurl: \ntitle: \n\n## 要約\n\n\n## 引用\n\n\n## メモ\n\n\n## 本文（クリップ）\n\n' }
+  { id: 'tmpl-article-v3', name: '記事クリップ', category: 'Uncategorized',
+    body: '#article\nid: {id}\ntags: \nurl: \ntitle: \n\n## 要約\n\n\n## 引用\n\n\n## メモ\n\n\n## 本文（クリップ）\n\n' }
 ];
 const VALID_CATEGORIES = [
   'LifeLog','House','Engineering','English','Management',
@@ -489,10 +489,12 @@ function expandPlaceholders(str) {
   const now = new Date();
   const date = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate());
   const datetime = date + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+  const id = date.replace(/-/g, '') + '-' + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
   return str
     .replace(/\{datetime\}/g, datetime)
     .replace(/\{date\}/g, date)
-    .replace(/\{weekday\}/g, WEEKDAYS_JA[now.getDay()]);
+    .replace(/\{weekday\}/g, WEEKDAYS_JA[now.getDay()])
+    .replace(/\{id\}/g, id);
 }
 
 // ── Modal ──
@@ -1403,7 +1405,7 @@ function openTemplateEditor(id) {
   openModal(id ? 'テンプレート編集' : '新規テンプレート',
     '<label>名前</label><input type="text" id="tmpl-name" value="' + escapeHtml(t.name) + '">' +
     '<label>カテゴリ</label><select id="tmpl-category">' + catOptions + '</select>' +
-    '<label>本文（{date} {datetime} {weekday} が使えます）</label>' +
+    '<label>本文（{date} {datetime} {weekday} {id} が使えます）</label>' +
     '<textarea id="tmpl-body">' + escapeHtml(t.body) + '</textarea>',
     '<button class="btn btn-secondary" id="tmpl-cancel-btn">キャンセル</button>' +
     '<button class="btn btn-primary" id="tmpl-save-btn">保存</button>');
